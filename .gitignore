@@ -3,7 +3,10 @@ dist/
 build/
 release/
 data/
+.local-data/
 .env
+.env.*
+!.env.example
 .DS_Store
 *.log
 *.zip

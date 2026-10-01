@@ -56,11 +56,15 @@ export class Store {
     const d = input as Partial<Draft> | null;
     if (!d || typeof d.prompt !== 'string' || d.prompt.length > 20000) throw new Error('Use a prompt of at most 20,000 characters.');
     if (!Number.isInteger(d.count) || d.count! < 1 || d.count! > 4) throw new Error('Choose between 1 and 4 images.');
-    if (!Array.isArray(d.referenceIds) || d.referenceIds.length > 5 || new Set(d.referenceIds).size !== d.referenceIds.length) throw new Error('Use up to five distinct reference images.');
+    if (!Array.isArray(d.referenceIds) || d.referenceIds.length > 20 || new Set(d.referenceIds).size !== d.referenceIds.length) throw new Error('Use up to twenty distinct reference images.');
     if (d.referenceIds.some(id => typeof id !== 'string' || !this.get<Asset>('asset', id))) throw new Error('A reference image is missing. Add it again.');
     const quality = d.quality ?? 'high';
     if (!(['low', 'medium', 'high', 'xhigh', 'max'] as ImageQuality[]).includes(quality)) throw new Error('Choose a valid image quality.');
-    return { prompt: d.prompt, count: d.count!, referenceIds: [...d.referenceIds], quality };
+    if (d.provider !== undefined && !['openai', 'higgsfield', 'codex'].includes(d.provider)) throw new Error('Choose a valid provider.');
+    if (d.resolution !== undefined && !['1k', '2k', '4k'].includes(d.resolution)) throw new Error('Choose a valid resolution.');
+    if (d.higgsfieldModel !== undefined && (typeof d.higgsfieldModel !== 'string' || !/^[a-z0-9_]+$/.test(d.higgsfieldModel))) throw new Error('Invalid Higgsfield model.');
+    if (d.higgsfieldOptions !== undefined && (!d.higgsfieldOptions || Array.isArray(d.higgsfieldOptions) || typeof d.higgsfieldOptions !== 'object' || JSON.stringify(d.higgsfieldOptions).length > 40000)) throw new Error('Invalid model options.');
+    return { ...(d.higgsfieldModel ? {higgsfieldModel:d.higgsfieldModel} : {}), ...(d.higgsfieldOptions ? {higgsfieldOptions:d.higgsfieldOptions} : {}), prompt: d.prompt, count: d.count!, referenceIds: [...d.referenceIds], quality, ...(d.provider ? { provider: d.provider } : {}), ...(d.resolution ? { resolution: d.resolution } : {}) };
   }
   assetPath(id: string, thumbnail = false) {
     const asset = this.get<Asset>('asset', id);

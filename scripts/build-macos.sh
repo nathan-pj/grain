@@ -33,6 +33,8 @@ cp -R build/backend/src "$BACKEND/src"
 cp package.json package-lock.json "$BACKEND/"
 
 npm ci --omit=dev --ignore-scripts --prefix "$BACKEND"
+# Install the pinned, checksum-verified Higgsfield native CLI into the bundle.
+(cd "$BACKEND/node_modules/@higgsfield/cli" && node install.js)
 
 if [ ! -f "$NODE_CACHE/$NODE_ARCHIVE" ]; then
   curl --fail --location --silent --show-error "$NODE_URL" --output "$NODE_CACHE/$NODE_ARCHIVE"
@@ -51,5 +53,5 @@ codesign --force --deep --sign - "$APP"
 
 mkdir -p "$ROOT/release"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ROOT/release/Grain-macOS-arm64.zip"
-shasum -a 256 "$ROOT/release/Grain-macOS-arm64.zip" > "$ROOT/release/Grain-macOS-arm64.zip.sha256"
+(cd "$ROOT/release" && shasum -a 256 Grain-macOS-arm64.zip > Grain-macOS-arm64.zip.sha256)
 echo "$APP"

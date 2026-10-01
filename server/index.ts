@@ -1,4 +1,6 @@
 import express from 'express';
+import { connection as codexConnection } from './codex.js';
+import { agentRoutes } from './agent.js';
 import multer from 'multer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +11,8 @@ import sharp from 'sharp';
 import { inputDimensions } from '../src/resize.js';
 import { Store, extFor } from './store.js';
 import { Queue } from './queue.js';
-import { connection, openAIConfigured, saveOpenAIKey } from './openai.js';
+import { connection as openAIConnection, openAIConfigured, saveOpenAIKey } from './openai.js';
+import { connectHiggsfield, higgsfieldConnection, higgs, higgsfieldCatalog } from './higgsfield.js';
 import { Upscaler, falConfigured, saveFalKey } from './fal.js';
 import { pixelcut } from './pixelcut.js';
 import type { Asset, Run, Setup } from '../src/types.js';
@@ -18,6 +21,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.env.PORT || 4318);
 const store = new Store(path.resolve(process.env.STUDIO_DATA_DIR || path.join(root, 'data')));
 store.recover();
+const provider = (): 'higgsfield' | 'openai' | 'codex' => { const saved=store.get<string>('meta','generation-provider');return saved==='higgsfield'||saved==='codex'?saved:'openai'; };
+const connection = async (name = provider()) => name === 'higgsfield' ? higgsfieldConnection() : name === 'codex' ? codexConnection() : { ...await openAIConnection(), provider: 'openai' };
 const queue = new Queue(store);
 const upscaler = new Upscaler(store);
 upscaler.resume();
@@ -35,7 +40,8 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(express.json({ limit: '128kb' }));
+app.use(express.json({ limit: '8mb' }));
+app.use('/api', agentRoutes(store,queue,provider));
 app.get('/api/state', (_req, res) => res.json(store.state()));
 app.get('/api/pixelcut/status', async (_req, res) => {
   if (!pixelcut.connected()) return res.json({ connected: false });
@@ -54,11 +60,27 @@ app.get('/api/pixelcut/callback', async (req, res) => {
 app.post('/api/runs/:id/jobs/:jobId/hide', (req, res) => res.json(store.setJobHidden(req.params.id, req.params.jobId, true)));
 app.post('/api/runs/:id/jobs/:jobId/restore', (req, res) => res.json(store.setJobHidden(req.params.id, req.params.jobId, false)));
 app.get('/api/connection', async (_req, res) => res.json(await connection()));
+app.put('/api/provider', async (req, res) => {
+  if (!['higgsfield', 'openai', 'codex'].includes(req.body.provider)) throw new Error('Choose a provider.');
+  store.put('meta', 'generation-provider', req.body.provider);
+  res.json(await connection());
+});
+app.get('/api/higgsfield/models', async (_req,res)=>res.json(await higgsfieldCatalog()));
+app.get('/api/higgsfield/models/:model', async (req,res)=>res.json(await higgsfieldCatalog(req.params.model)));
+app.post('/api/higgsfield/connect', (_req, res) => { connectHiggsfield(); res.json({ started: true }); });
+app.get('/api/higgsfield/workspaces', async (_req, res) => res.json(await higgs(['workspace', 'list'])));
+app.put('/api/higgsfield/workspace', async (req, res) => {
+  const workspaces = await higgs(['workspace', 'list']);
+  if (!workspaces.some((w: {id:string}) => w.id === req.body.id)) throw new Error('Select an available workspace.');
+  // CLI set returns human-readable text even with --json.
+  await higgs(['workspace', 'set', req.body.id]).catch(async () => { const current = await higgs(['workspace', 'list']); if (!current.some((w: {id:string;is_selected:boolean}) => w.id === req.body.id && w.is_selected)) throw new Error('Workspace selection failed.'); });
+  res.json(await higgsfieldConnection());
+});
 app.get('/api/openai/status', (_req, res) => res.json({ configured: openAIConfigured(), model: 'gpt-image-2.5-sunburst' }));
 app.put('/api/openai/key', (req, res) => { saveOpenAIKey(typeof req.body.key === 'string' ? req.body.key : ''); res.json({ configured: true }); });
 app.put('/api/draft', (req, res) => { const draft = store.validateDraft(req.body); store.put('draft', 'current', draft); res.json(draft); });
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 5 } });
-app.post('/api/assets', upload.array('images', 5), async (req, res) => {
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 20 } });
+app.post('/api/assets', upload.array('images', 20), async (req, res) => {
   const files = req.files as Express.Multer.File[];
   if (!files?.length) return res.status(400).json({ error: 'Choose at least one image.' });
   const assets = [];
@@ -102,8 +124,9 @@ app.post('/api/runs', async (req, res) => {
   const prior = store.get<Run>('run', id);
   if (prior) return res.json(prior);
   const draft = store.validateDraft(req.body.draft);
-  if (!draft.prompt.trim()) return res.status(400).json({ error: 'Write a prompt first.' });
+  if (!draft.prompt.trim() && (provider() !== 'higgsfield' || !draft.referenceIds.length)) return res.status(400).json({ error: 'Add a prompt or reference image.' });
   const status = await connection();
+  draft.provider = provider();
   if (!status.connected) return res.status(409).json({ error: status.message });
   const generatorTabId = typeof req.body.generatorTabId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(req.body.generatorTabId) ? req.body.generatorTabId : undefined;
   const run = store.createRun(id, draft, generatorTabId);
@@ -111,7 +134,8 @@ app.post('/api/runs', async (req, res) => {
   void queue.pump();
 });
 app.post('/api/runs/:id/jobs/:jobId/retry', async (req, res) => {
-  const status = await connection();
+  const run = store.get<Run>('run', req.params.id);
+  const status = await connection(run?.draft.provider || 'openai');
   if (!status.connected) return res.status(409).json({ error: status.message });
   res.status(202).json(await queue.retry(req.params.id, req.params.jobId));
 });
@@ -133,7 +157,7 @@ app.get('/{*path}', (_req, res) => {
   res.sendFile(path.join(root, 'dist/index.html'));
 });
 app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  const message = error instanceof multer.MulterError ? error.code === 'LIMIT_FILE_SIZE' ? 'Each image must be 20 MB or smaller.' : 'Upload up to five images at a time.' : error.message || 'Something went wrong. Your saved work is still here.';
+  const message = error instanceof multer.MulterError ? error.code === 'LIMIT_FILE_SIZE' ? 'Each image must be 20 MB or smaller.' : 'Upload up to twenty images at a time.' : error.message || 'Something went wrong. Your saved work is still here.';
   res.status(400).json({ error: message });
 });
 app.listen(port, '127.0.0.1', () => console.log(`Image Studio is ready at http://127.0.0.1:${port}`));

@@ -1,12 +1,14 @@
 import path from 'node:path';
 import { Store } from './store.js';
 import { generate, type GenerateInput } from './openai.js';
+import { generate as codexGenerate } from './codex.js';
+import { higgsfieldGenerate } from './higgsfield.js';
 import type { Run } from '../src/types.js';
 
 type Generator = (input: GenerateInput) => Promise<{ bytes: Buffer; name: string }>;
 export class Queue {
   private active = new Map<string, Promise<void>>();
-  constructor(private store: Store, private generator: Generator = generate) {}
+  constructor(private store: Store, private generator: Generator = input => input.provider === 'higgsfield' ? higgsfieldGenerate(input) : input.provider === 'codex' ? codexGenerate(input) : generate(input)) {}
   async pump() {
     // Claim synchronously before starting workers so overlapping submissions cannot duplicate jobs.
     for (const run of this.store.list<Run>('run').reverse()) {
@@ -34,7 +36,7 @@ export class Queue {
     const job = run.jobs.find(j => j.id === jobId)!;
     let patch: { status: 'succeeded'; assetId: string } | { status: 'failed'; error: string };
     try {
-      const result = await this.generator({ prompt: run.draft.prompt, references: run.draft.referenceIds.map(id => this.store.assetPath(id)), directory: path.join(this.store.root, 'jobs', job.id), quality: run.draft.quality });
+      const result = await this.generator({ prompt: run.draft.prompt, references: run.draft.referenceIds.map(id => this.store.assetPath(id)), directory: path.join(this.store.root, 'jobs', job.id), quality: run.draft.quality, resolution: run.draft.resolution, provider: run.draft.provider, higgsfieldModel: run.draft.higgsfieldModel, higgsfieldOptions: run.draft.higgsfieldOptions, remoteJobId: job.higgsfieldJobId, onRemoteJob: id => { const latest = this.store.get<Run>('run', run.id)!; const target = latest.jobs.find(j => j.id === jobId)!; if (id) target.higgsfieldJobId = id; else delete target.higgsfieldJobId; this.store.put('run', latest.id, latest); } });
       const asset = await this.store.addAsset(result.bytes, `studio-${run.id.slice(0, 8)}-${job.index + 1}${path.extname(result.name)}`);
       patch = { assetId: asset.id, status: 'succeeded' };
       this.store.put('meta', 'verified', true);

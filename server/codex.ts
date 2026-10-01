@@ -6,7 +6,13 @@ import os from 'node:os';
 import type { Connection } from '../src/types.js';
 
 const execFileAsync = promisify(execFile);
-export const codexBin = process.env.STUDIO_CODEX_BIN || (existsSync('/Applications/ChatGPT.app/Contents/Resources/codex') ? '/Applications/ChatGPT.app/Contents/Resources/codex' : 'codex');
+export const codexBin = process.env.STUDIO_CODEX_BIN || [
+ '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
+ '/Applications/Codex.app/Contents/Resources/codex',
+ '/Applications/ChatGPT.app/Contents/Resources/codex',
+ path.join(os.homedir(),'.local/bin/codex'), '/opt/homebrew/bin/codex', '/usr/local/bin/codex'
+].find(file=>existsSync(file)) || 'codex';
+
 export function subscriptionEnv() {
   const env = { ...process.env };
   for (const key of ['OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_ORG_ID', 'OPENAI_PROJECT_ID']) delete env[key];
@@ -17,9 +23,9 @@ export async function connection(verified = false): Promise<Connection> {
   try {
     const { stdout, stderr } = await execFileAsync(codexBin, ['login', 'status'], { env: subscriptionEnv(), timeout: 10000 });
     const connected = isSubscriptionLogin(stdout + stderr);
-    return { connected, verified, message: connected ? 'Connected through your ChatGPT subscription.' : 'Sign in to Codex with ChatGPT. API-key authentication is not used by this studio.' };
+    return { connected, verified, provider: 'codex', message: connected ? 'Connected through your ChatGPT subscription.' : 'Sign in to Codex with ChatGPT. API-key authentication is not used by this studio.' };
   } catch {
-    return { connected: false, verified, message: 'Open Codex and sign in with ChatGPT, then check the connection again.' };
+    return { connected: false, verified, provider: 'codex', message: 'Open Codex and sign in with ChatGPT, then check the connection again.' };
   }
 }
 export function allowedOutput(file: string, outputRoot: string, since: number) {

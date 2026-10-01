@@ -17,6 +17,10 @@ const cloneDraft = (draft: Draft): Draft => ({
   referenceIds: [...draft.referenceIds],
   count: draft.count,
   quality: draft.quality ?? 'high',
+  ...(draft.resolution ? { resolution: draft.resolution } : {}),
+  ...(draft.higgsfieldModel ? {higgsfieldModel:draft.higgsfieldModel} : {}),
+  ...(draft.higgsfieldOptions ? {higgsfieldOptions:structuredClone(draft.higgsfieldOptions)} : {}),
+  ...(draft.provider ? { provider: draft.provider } : {}),
 });
 
 export function makeGeneratorTab(draft: Draft, name = 'Untitled 1'): GeneratorTab {
@@ -123,7 +127,7 @@ export function closeGeneratorTab(tabs: GeneratorTab[], id: string): { tabs: Gen
 }
 
 export function attachReferencesToTab(tabs: GeneratorTab[], id: string, referenceIds: string[]) {
-  return tabs.map(tab => tab.id === id ? { ...tab, draft: { ...tab.draft, referenceIds: [...tab.draft.referenceIds, ...referenceIds].slice(0, 5) } } : tab);
+  return tabs.map(tab => tab.id === id ? { ...tab, draft: { ...tab.draft, referenceIds: [...tab.draft.referenceIds, ...referenceIds].slice(0, 20) } } : tab);
 }
 
 export function runsForGeneratorTab(runs: Run[], id: string) {

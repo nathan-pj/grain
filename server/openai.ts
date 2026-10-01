@@ -37,7 +37,7 @@ export function sunburstSize(prompt: string) {
   return ratio ? sizes[ratio] : '1024x1024';
 }
 
-export type GenerateInput = { prompt: string; references: string[]; directory: string; quality?: ImageQuality; onProgress?: (text: string) => void };
+export type GenerateInput = { prompt: string; references: string[]; directory: string; quality?: ImageQuality; resolution?: '1k' | '2k' | '4k'; provider?: 'openai' | 'higgsfield' | 'codex'; higgsfieldModel?: string; higgsfieldOptions?: Record<string, unknown>; remoteJobId?: string; onRemoteJob?: (id: string) => void; onProgress?: (text: string) => void };
 type Fetcher = typeof fetch;
 
 export async function sunburstGenerate(input: GenerateInput, request: Fetcher = fetch, suppliedKey = openAIKey()): Promise<{ bytes: Buffer; name: string }> {
